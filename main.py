@@ -3,6 +3,10 @@ import urllib.request
 import json
 import threading
 import time
+import os
+
+# Maglumatlary durnukly saklamak üçin lokal JSON faýly
+DATA_FILE = "finance_data.json"
 
 def main(page: ft.Page):
     page.title = "Crypto & Finance Tracker"
@@ -10,10 +14,8 @@ def main(page: ft.Page):
     page.padding = 20
     page.scroll = ft.ScrollMode.AUTO
 
-    # Balanslary saklamak üçin üýtgeýänler
-    total_balance = 0.0
-    total_income = 0.0
-    total_expense = 0.0
+    # Amallar sanawy
+    transactions_data = []
 
     # 1. Kripto Bahalary üçin Tekstler
     btc_text = ft.Text("BTC: Ýüklenýär...", size=16, weight=ft.FontWeight.BOLD, color="white")
@@ -44,39 +46,58 @@ def main(page: ft.Page):
     def fetch_crypto_prices():
         while True:
             try:
-                # BTC Bahasy (Binance API)
                 btc_url = "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"
                 req_btc = urllib.request.urlopen(btc_url, timeout=5)
                 data_btc = json.loads(req_btc.read().decode())
                 btc_price = float(data_btc["price"])
 
-                # ETH Bahasy (Binance API)
                 eth_url = "https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT"
                 req_eth = urllib.request.urlopen(eth_url, timeout=5)
                 data_eth = json.loads(req_eth.read().decode())
                 eth_price = float(data_eth["price"])
 
-                # Ekrandaky tekstleri täzelemek
                 btc_text.value = f"BTC: ${btc_price:,.2f}"
                 eth_text.value = f"ETH: ${eth_price:,.2f}"
-            except Exception as err:
-                btc_text.value = "BTC: Yalňyşlyk"
-                eth_text.value = "ETH: Yalňyşlyk"
+            except Exception:
+                btc_text.value = "BTC: Ýalňyşlyk"
+                eth_text.value = "ETH: Ýalňyşlyk"
             
             page.update()
-            time.sleep(10)  # Her 10 sekuntdan täzeleýär
+            time.sleep(10)
 
-    # Arka fonda bahalary täzeläp durjak potoky (Thread) başlatmak
     threading.Thread(target=fetch_crypto_prices, daemon=True).start()
 
-    # 3. Balans we Hasabat Kartasy
-    balance_text = ft.Text("0.00 TMT", size=32, weight=ft.FontWeight.BOLD, color="green")
+    # 3. Balans we Hasabat Tekstleri
+    balance_text = ft.Text("0.00 TMT", size=28, weight=ft.FontWeight.BOLD, color="green")
     income_text = ft.Text("+0.00 TMT", color="green", weight=ft.FontWeight.BOLD)
     expense_text = ft.Text("-0.00 TMT", color="red", weight=ft.FontWeight.BOLD)
 
+    # 4. Pie Chart (Tegelek Grafik Widgeti)
+    chart_income_section = ft.PieChartSection(
+        value=1,
+        title="0 TMT",
+        color="green",
+        radius=40,
+        title_style=ft.TextStyle(size=11, weight=ft.FontWeight.BOLD, color="white"),
+    )
+    chart_expense_section = ft.PieChartSection(
+        value=1,
+        title="0 TMT",
+        color="red",
+        radius=40,
+        title_style=ft.TextStyle(size=11, weight=ft.FontWeight.BOLD, color="white"),
+    )
+
+    pie_chart = ft.PieChart(
+        sections=[chart_income_section, chart_expense_section],
+        sections_space=3,
+        center_space_radius=30,
+        height=140,
+    )
+
     balance_card = ft.Card(
         content=ft.Container(
-            padding=20,
+            padding=15,
             bgcolor="#111827",
             border_radius=12,
             content=ft.Column(
@@ -96,13 +117,17 @@ def main(page: ft.Page):
                                 expense_text,
                             ]),
                         ]
-                    )
+                    ),
+                    ft.Container(height=10),
+                    # Grafigi kartanyň içine ýerleşdirmek
+                    ft.Text("Girdeji / Çykdajy Grafigi", size=12, color="grey"),
+                    pie_chart,
                 ]
             )
         )
     )
 
-    # 4. Amalyň görnüşini saýlamak
+    # 5. Amalyn görnüşini saýlamak
     type_radio = ft.RadioGroup(
         content=ft.Row([
             ft.Radio(value="income", label="Girdeji (+)"),
@@ -111,7 +136,7 @@ def main(page: ft.Page):
         value="income"
     )
 
-    # 5. Giriş Meýdançalary
+    # 6. Giriş Meýdançalary
     amount_input = ft.TextField(
         label="Möçberi (TMT)", 
         width=180, 
@@ -128,35 +153,44 @@ def main(page: ft.Page):
 
     history_list = ft.Column(spacing=10)
 
-    # Goşmak funksiýasy
-    def add_transaction(e):
-        nonlocal total_balance, total_income, total_expense
+    # UI we Grafik Aňlatmalaryny Täzelemek Funksiýasy
+    def update_ui_and_chart():
+        tot_inc = sum(t["val"] for t in transactions_data if t["is_income"])
+        tot_exp = sum(t["val"] for t in transactions_data if not t["is_income"])
+        tot_bal = tot_inc - tot_exp
 
-        try:
-            val = float(amount_input.value)
-        except (ValueError, TypeError):
-            return
+        balance_text.value = f"{tot_bal:.2f} TMT"
+        balance_text.color = "green" if tot_bal >= 0 else "red"
+        income_text.value = f"+{tot_inc:.2f} TMT"
+        expense_text.value = f"-{tot_exp:.2f} TMT"
 
-        desc = desc_input.value.strip() if desc_input.value else "Amal"
-        is_income = type_radio.value == "income"
+        # Grafigi täzelemek (0 bolanda ýalňyşlyk bermez ýaly 0.001 goşulýar)
+        chart_income_section.value = tot_inc if tot_inc > 0 else 0.001
+        chart_income_section.title = f"+{tot_inc:.0f}"
+        
+        chart_expense_section.value = tot_exp if tot_exp > 0 else 0.001
+        chart_expense_section.title = f"-{tot_exp:.0f}"
+
+        page.update()
+
+    # Baza Ýazmak we Okamak
+    def save_data():
+        with open(DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(transactions_data, f, ensure_ascii=False, indent=2)
+
+    def render_item_to_ui(item):
+        val = item["val"]
+        desc = item["desc"]
+        is_income = item["is_income"]
 
         if is_income:
-            total_income += val
-            total_balance += val
             icon = ft.Icons.ARROW_UPWARD
             color = "green"
             sign = "+"
         else:
-            total_expense += val
-            total_balance -= val
             icon = ft.Icons.ARROW_DOWNWARD
             color = "red"
             sign = "-"
-
-        balance_text.value = f"{total_balance:.2f} TMT"
-        balance_text.color = "green" if total_balance >= 0 else "red"
-        income_text.value = f"+{total_income:.2f} TMT"
-        expense_text.value = f"-{total_expense:.2f} TMT"
 
         history_list.controls.insert(
             0,
@@ -177,11 +211,47 @@ def main(page: ft.Page):
             )
         )
 
+    def load_data():
+        nonlocal transactions_data
+        if os.path.exists(DATA_FILE):
+            try:
+                with open(DATA_FILE, "r", encoding="utf-8") as f:
+                    transactions_data = json.load(f)
+                
+                history_list.controls.clear()
+                for item in transactions_data:
+                    render_item_to_ui(item)
+                
+                update_ui_and_chart()
+            except Exception as err:
+                print("Baza okamakda ýalňyşlyk:", err)
+
+    # Goşmak funksiýasy
+    def add_transaction(e):
+        try:
+            val = float(amount_input.value)
+        except (ValueError, TypeError):
+            return
+
+        desc = desc_input.value.strip() if desc_input.value else "Amal"
+        is_income = type_radio.value == "income"
+
+        new_item = {
+            "val": val,
+            "desc": desc,
+            "is_income": is_income
+        }
+
+        transactions_data.append(new_item)
+        render_item_to_ui(new_item)
+        save_data()
+        update_ui_and_chart()
+
         amount_input.value = ""
         desc_input.value = ""
         page.update()
 
-    # 6. Goşmak Düwmesi
+    # 7. Goşmak Düwmesi
     add_btn = ft.Button(
         content=ft.Row(
             [ft.Icon(ft.Icons.ADD), ft.Text("Amaly Goş")],
@@ -196,7 +266,7 @@ def main(page: ft.Page):
         )
     )
 
-    # Sahypa elementleri goşmak
+    # Ekrana goşmak
     page.add(
         crypto_card,
         ft.Container(height=10),
@@ -213,5 +283,8 @@ def main(page: ft.Page):
         history_list
     )
 
+    # App açylanda öňki maglumatlary ýüklemek
+    load_data()
+
 if __name__ == "__main__":
-    ft.run(main, view=ft.AppView.WEB_BROWSER)
+    ft.app(target=main)
