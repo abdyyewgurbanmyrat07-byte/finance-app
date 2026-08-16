@@ -5,7 +5,15 @@ import threading
 import time
 import os
 
-# Maglumatlary durnukly saklamak üçin lokal JSON faýly
+# PieChartSection-y Flet-iň içki modullaryndan ygtybarly çekmek
+try:
+    from flet_core.pie_chart import PieChartSection
+except ImportError:
+    try:
+        from flet.pie_chart import PieChartSection
+    except ImportError:
+        PieChartSection = getattr(ft, "PieChartSection", None)
+
 DATA_FILE = "finance_data.json"
 
 def main(page: ft.Page):
@@ -14,7 +22,6 @@ def main(page: ft.Page):
     page.padding = 20
     page.scroll = ft.ScrollMode.AUTO
 
-    # Amallar sanawy
     transactions_data = []
 
     # 1. Kripto Bahalary üçin Tekstler
@@ -42,7 +49,6 @@ def main(page: ft.Page):
         )
     )
 
-    # 2. Real-Time Crypto Bahalaryny Çekýän Arka Fon Funksiýasy
     def fetch_crypto_prices():
         while True:
             try:
@@ -67,20 +73,19 @@ def main(page: ft.Page):
 
     threading.Thread(target=fetch_crypto_prices, daemon=True).start()
 
-    # 3. Balans we Hasabat Tekstleri
     balance_text = ft.Text("0.00 TMT", size=28, weight=ft.FontWeight.BOLD, color="green")
     income_text = ft.Text("+0.00 TMT", color="green", weight=ft.FontWeight.BOLD)
     expense_text = ft.Text("-0.00 TMT", color="red", weight=ft.FontWeight.BOLD)
 
-    # 4. Pie Chart (Tegelek Grafik Widgeti)
-    chart_income_section = ft.PieChartSection(
+    # 4. Pie Chart
+    chart_income_section = PieChartSection(
         value=1,
         title="0 TMT",
         color="green",
         radius=40,
         title_style=ft.TextStyle(size=11, weight=ft.FontWeight.BOLD, color="white"),
     )
-    chart_expense_section = ft.PieChartSection(
+    chart_expense_section = PieChartSection(
         value=1,
         title="0 TMT",
         color="red",
@@ -119,7 +124,6 @@ def main(page: ft.Page):
                         ]
                     ),
                     ft.Container(height=10),
-                    # Grafigi kartanyň içine ýerleşdirmek
                     ft.Text("Girdeji / Çykdajy Grafigi", size=12, color="grey"),
                     pie_chart,
                 ]
@@ -127,7 +131,6 @@ def main(page: ft.Page):
         )
     )
 
-    # 5. Amalyn görnüşini saýlamak
     type_radio = ft.RadioGroup(
         content=ft.Row([
             ft.Radio(value="income", label="Girdeji (+)"),
@@ -136,7 +139,6 @@ def main(page: ft.Page):
         value="income"
     )
 
-    # 6. Giriş Meýdançalary
     amount_input = ft.TextField(
         label="Möçberi (TMT)", 
         width=180, 
@@ -153,7 +155,6 @@ def main(page: ft.Page):
 
     history_list = ft.Column(spacing=10)
 
-    # UI we Grafik Aňlatmalaryny Täzelemek Funksiýasy
     def update_ui_and_chart():
         tot_inc = sum(t["val"] for t in transactions_data if t["is_income"])
         tot_exp = sum(t["val"] for t in transactions_data if not t["is_income"])
@@ -164,7 +165,6 @@ def main(page: ft.Page):
         income_text.value = f"+{tot_inc:.2f} TMT"
         expense_text.value = f"-{tot_exp:.2f} TMT"
 
-        # Grafigi täzelemek (0 bolanda ýalňyşlyk bermez ýaly 0.001 goşulýar)
         chart_income_section.value = tot_inc if tot_inc > 0 else 0.001
         chart_income_section.title = f"+{tot_inc:.0f}"
         
@@ -173,7 +173,6 @@ def main(page: ft.Page):
 
         page.update()
 
-    # Baza Ýazmak we Okamak
     def save_data():
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(transactions_data, f, ensure_ascii=False, indent=2)
@@ -226,7 +225,6 @@ def main(page: ft.Page):
             except Exception as err:
                 print("Baza okamakda ýalňyşlyk:", err)
 
-    # Goşmak funksiýasy
     def add_transaction(e):
         try:
             val = float(amount_input.value)
@@ -251,7 +249,6 @@ def main(page: ft.Page):
         desc_input.value = ""
         page.update()
 
-    # 7. Goşmak Düwmesi
     add_btn = ft.Button(
         content=ft.Row(
             [ft.Icon(ft.Icons.ADD), ft.Text("Amaly Goş")],
@@ -266,7 +263,6 @@ def main(page: ft.Page):
         )
     )
 
-    # Ekrana goşmak
     page.add(
         crypto_card,
         ft.Container(height=10),
@@ -283,7 +279,6 @@ def main(page: ft.Page):
         history_list
     )
 
-    # App açylanda öňki maglumatlary ýüklemek
     load_data()
 
 if __name__ == "__main__":
