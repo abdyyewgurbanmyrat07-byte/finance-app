@@ -5,7 +5,6 @@ import threading
 import time
 import os
 
-# PieChartSection-y Flet-iň içki modullaryndan ygtybarly çekmek
 try:
     from flet_core.pie_chart import PieChartSection
 except ImportError:
@@ -81,59 +80,7 @@ def main(page: ft.Page):
 
     threading.Thread(target=fetch_crypto_prices, daemon=True).start()
 
-    # ==================== 2. VALÝUTA KALKULÝATORY (USD <-> TMT) ====================
-    usd_input = ft.TextField(
-        label="USD ($)", 
-        width=120, 
-        border_radius=8, 
-        keyboard_type=ft.KeyboardType.NUMBER,
-        value="1"
-    )
-    rate_input = ft.TextField(
-        label="Kurs (1 USD = ? TMT)", 
-        width=150, 
-        border_radius=8, 
-        keyboard_type=ft.KeyboardType.NUMBER,
-        value="19.5"
-    )
-    calc_result_text = ft.Text("19.50 TMT", size=16, weight=ft.FontWeight.BOLD, color="#22c55e")
-
-    def calculate_currency(e=None):
-        try:
-            usd_val = float(usd_input.value)
-            rate_val = float(rate_input.value)
-            res = usd_val * rate_val
-            calc_result_text.value = f"{res:,.2f} TMT"
-            calc_result_text.color = "#22c55e"
-        except (ValueError, TypeError):
-            calc_result_text.value = "Nädogry san!"
-            calc_result_text.color = "red"
-        page.update()
-
-    usd_input.on_change = calculate_currency
-    rate_input.on_change = calculate_currency
-
-    converter_card = ft.Card(
-        content=ft.Container(
-            padding=15,
-            bgcolor="#111827",
-            border_radius=12,
-            content=ft.Column(
-                controls=[
-                    ft.Text("💱 Valýuta Kalkulýatory (USD ➔ TMT)", size=15, weight=ft.FontWeight.BOLD, color="#f59e0b"),
-                    ft.Divider(color="#374151"),
-                    ft.Row([usd_input, rate_input], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                    ft.Container(height=5),
-                    ft.Row([
-                        ft.Text("Netije: ", size=14, color="grey"),
-                        calc_result_text
-                    ])
-                ]
-            )
-        )
-    )
-
-    # ==================== 3. BALANS WE TEGELEK GRAFIK ====================
+    # ==================== 2. BALANS WE TEGELEK GRAFIK ====================
     balance_text = ft.Text("0.00 TMT", size=26, weight=ft.FontWeight.BOLD, color="green")
     income_text = ft.Text("+0.00 TMT", color="green", weight=ft.FontWeight.BOLD)
     expense_text = ft.Text("-0.00 TMT", color="red", weight=ft.FontWeight.BOLD)
@@ -191,7 +138,7 @@ def main(page: ft.Page):
         )
     )
 
-    # ==================== 4. AMALLAR WE TARYH ====================
+    # ==================== 3. AMALLAR WE TARYH ====================
     type_radio = ft.RadioGroup(
         content=ft.Row([
             ft.Radio(value="income", label="Girdeji (+)"),
@@ -326,8 +273,6 @@ def main(page: ft.Page):
 
     page.add(
         crypto_card,
-        ft.Container(height=10),
-        converter_card,
         ft.Container(height=10),
         balance_card,
         ft.Container(height=15),
