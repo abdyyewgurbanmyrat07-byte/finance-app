@@ -19,65 +19,125 @@ DATA_FILE = "finance_data.json"
 def main(page: ft.Page):
     page.title = "Crypto & Finance Tracker"
     page.theme_mode = ft.ThemeMode.DARK
-    page.padding = 20
+    page.padding = 15
     page.scroll = ft.ScrollMode.AUTO
 
     transactions_data = []
 
-    # 1. Kripto Bahalary üçin Tekstler
-    btc_text = ft.Text("BTC: Ýüklenýär...", size=16, weight=ft.FontWeight.BOLD, color="white")
-    eth_text = ft.Text("ETH: Ýüklenýär...", size=16, weight=ft.FontWeight.BOLD, color="white")
+    # ==================== 1. KRIPTO BALANSLARY WE BAHALARY ====================
+    btc_text = ft.Text("BTC: Ýüklenýär...", size=13, weight=ft.FontWeight.BOLD, color="white")
+    eth_text = ft.Text("ETH: Ýüklenýär...", size=13, weight=ft.FontWeight.BOLD, color="white")
+    bnb_text = ft.Text("BNB: Ýüklenýär...", size=13, weight=ft.FontWeight.BOLD, color="white")
+    sol_text = ft.Text("SOL: Ýüklenýär...", size=13, weight=ft.FontWeight.BOLD, color="white")
 
     crypto_card = ft.Card(
         content=ft.Container(
             padding=15,
             bgcolor="#1f2937",
-            border_radius=10,
-            content=ft.Row(
-                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            border_radius=12,
+            content=ft.Column(
                 controls=[
-                    ft.Row([
-                        ft.Icon(ft.Icons.CURRENCY_BITCOIN, color="orange", size=28),
-                        btc_text,
-                    ]),
-                    ft.Row([
-                        ft.Icon(ft.Icons.CURRENCY_EXCHANGE, color="cyan", size=24),
-                        eth_text,
-                    ]),
+                    ft.Text("🪙 Real-Wagt Kripto Bahalary", size=15, weight=ft.FontWeight.BOLD, color="#38bdf8"),
+                    ft.Divider(color="#374151"),
+                    ft.Row(
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        controls=[
+                            ft.Row([ft.Icon(ft.Icons.CURRENCY_BITCOIN, color="orange", size=20), btc_text]),
+                            ft.Row([ft.Icon(ft.Icons.CURRENCY_EXCHANGE, color="cyan", size=20), eth_text]),
+                        ]
+                    ),
+                    ft.Container(height=5),
+                    ft.Row(
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        controls=[
+                            ft.Row([ft.Icon(ft.Icons.TOKEN, color="yellow", size=20), bnb_text]),
+                            ft.Row([ft.Icon(ft.Icons.FLASH_ON, color="purple", size=20), sol_text]),
+                        ]
+                    )
                 ]
             )
         )
     )
 
     def fetch_crypto_prices():
+        coins = [
+            ("BTCUSDT", btc_text, "BTC"),
+            ("ETHUSDT", eth_text, "ETH"),
+            ("BNBUSDT", bnb_text, "BNB"),
+            ("SOLUSDT", sol_text, "SOL"),
+        ]
         while True:
-            try:
-                btc_url = "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"
-                req_btc = urllib.request.urlopen(btc_url, timeout=5)
-                data_btc = json.loads(req_btc.read().decode())
-                btc_price = float(data_btc["price"])
-
-                eth_url = "https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT"
-                req_eth = urllib.request.urlopen(eth_url, timeout=5)
-                data_eth = json.loads(req_eth.read().decode())
-                eth_price = float(data_eth["price"])
-
-                btc_text.value = f"BTC: ${btc_price:,.2f}"
-                eth_text.value = f"ETH: ${eth_price:,.2f}"
-            except Exception:
-                btc_text.value = "BTC: Ýalňyşlyk"
-                eth_text.value = "ETH: Ýalňyşlyk"
-            
+            for symbol, text_ctrl, label in coins:
+                try:
+                    url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}"
+                    req = urllib.request.urlopen(url, timeout=5)
+                    data = json.loads(req.read().decode())
+                    price = float(data["price"])
+                    text_ctrl.value = f"{label}: ${price:,.2f}"
+                except Exception:
+                    text_ctrl.value = f"{label}: Ýalňyşlyk"
             page.update()
             time.sleep(10)
 
     threading.Thread(target=fetch_crypto_prices, daemon=True).start()
 
-    balance_text = ft.Text("0.00 TMT", size=28, weight=ft.FontWeight.BOLD, color="green")
+    # ==================== 2. VALÝUTA KALKULÝATORY (USD <-> TMT) ====================
+    usd_input = ft.TextField(
+        label="USD ($)", 
+        width=120, 
+        border_radius=8, 
+        keyboard_type=ft.KeyboardType.NUMBER,
+        value="1"
+    )
+    rate_input = ft.TextField(
+        label="Kurs (1 USD = ? TMT)", 
+        width=150, 
+        border_radius=8, 
+        keyboard_type=ft.KeyboardType.NUMBER,
+        value="19.5"
+    )
+    calc_result_text = ft.Text("19.50 TMT", size=16, weight=ft.FontWeight.BOLD, color="#22c55e")
+
+    def calculate_currency(e=None):
+        try:
+            usd_val = float(usd_input.value)
+            rate_val = float(rate_input.value)
+            res = usd_val * rate_val
+            calc_result_text.value = f"{res:,.2f} TMT"
+            calc_result_text.color = "#22c55e"
+        except (ValueError, TypeError):
+            calc_result_text.value = "Nädogry san!"
+            calc_result_text.color = "red"
+        page.update()
+
+    usd_input.on_change = calculate_currency
+    rate_input.on_change = calculate_currency
+
+    converter_card = ft.Card(
+        content=ft.Container(
+            padding=15,
+            bgcolor="#111827",
+            border_radius=12,
+            content=ft.Column(
+                controls=[
+                    ft.Text("💱 Valýuta Kalkulýatory (USD ➔ TMT)", size=15, weight=ft.FontWeight.BOLD, color="#f59e0b"),
+                    ft.Divider(color="#374151"),
+                    ft.Row([usd_input, rate_input], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                    ft.Container(height=5),
+                    ft.Row([
+                        ft.Text("Netije: ", size=14, color="grey"),
+                        calc_result_text
+                    ])
+                ]
+            )
+        )
+    )
+
+    # ==================== 3. BALANS WE TEGELEK GRAFIK ====================
+    balance_text = ft.Text("0.00 TMT", size=26, weight=ft.FontWeight.BOLD, color="green")
     income_text = ft.Text("+0.00 TMT", color="green", weight=ft.FontWeight.BOLD)
     expense_text = ft.Text("-0.00 TMT", color="red", weight=ft.FontWeight.BOLD)
 
-    # 4. Pie Chart
     chart_income_section = PieChartSection(
         value=1,
         title="0 TMT",
@@ -97,19 +157,19 @@ def main(page: ft.Page):
         sections=[chart_income_section, chart_expense_section],
         sections_space=3,
         center_space_radius=30,
-        height=140,
+        height=130,
     )
 
     balance_card = ft.Card(
         content=ft.Container(
             padding=15,
-            bgcolor="#111827",
+            bgcolor="#1f2937",
             border_radius=12,
             content=ft.Column(
                 controls=[
                     ft.Text("Umumy Balans", size=14, color="grey"),
                     balance_text,
-                    ft.Divider(color="grey"),
+                    ft.Divider(color="#374151"),
                     ft.Row(
                         alignment=ft.MainAxisAlignment.SPACE_AROUND,
                         controls=[
@@ -131,6 +191,7 @@ def main(page: ft.Page):
         )
     )
 
+    # ==================== 4. AMALLAR WE TARYH ====================
     type_radio = ft.RadioGroup(
         content=ft.Row([
             ft.Radio(value="income", label="Girdeji (+)"),
@@ -141,7 +202,7 @@ def main(page: ft.Page):
 
     amount_input = ft.TextField(
         label="Möçberi (TMT)", 
-        width=180, 
+        width=150, 
         prefix_icon=ft.Icons.ATTACH_MONEY,
         border_radius=8,
         keyboard_type=ft.KeyboardType.NUMBER
@@ -195,7 +256,7 @@ def main(page: ft.Page):
             0,
             ft.Container(
                 padding=12,
-                bgcolor="#1f2937",
+                bgcolor="#111827",
                 border_radius=8,
                 content=ft.Row(
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
@@ -257,7 +318,7 @@ def main(page: ft.Page):
         on_click=add_transaction,
         style=ft.ButtonStyle(
             color="white",
-            bgcolor="blue",
+            bgcolor="#2563eb",
             padding=15,
             shape=ft.RoundedRectangleBorder(radius=8)
         )
@@ -265,6 +326,8 @@ def main(page: ft.Page):
 
     page.add(
         crypto_card,
+        ft.Container(height=10),
+        converter_card,
         ft.Container(height=10),
         balance_card,
         ft.Container(height=15),
