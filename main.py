@@ -1,222 +1,289 @@
 import flet as ft
-import urllib.request
-import json
-import threading
-import time
+import sqlite3
+import csv
+import shutil
+from datetime import datetime
 
+# ----------------- BAZA LOGIKASY -----------------
+def init_db():
+    conn = sqlite3.connect("finance_ultra.db")
+    cursor = conn.cursor()
+    cursor.execute('CREATE TABLE IF NOT EXISTS transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, amount REAL, trans_type TEXT, category TEXT, date TEXT)')
+    cursor.execute('CREATE TABLE IF NOT EXISTS goals (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, target_amount REAL, current_amount REAL)')
+    cursor.execute('CREATE TABLE IF NOT EXISTS budgets (category TEXT PRIMARY KEY, limit_amount REAL)')
+    cursor.execute('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)')
+    cursor.execute("INSERT OR IGNORE INTO settings VALUES ('language', 'Türkmen')")
+    cursor.execute("INSERT OR IGNORE INTO settings VALUES ('currency', 'USD')")
+    conn.commit()
+    conn.close()
+
+def get_setting(key):
+    conn = sqlite3.connect("finance_ultra.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT value FROM settings WHERE key=?", (key,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else ""
+
+def set_setting(key, value):
+    conn = sqlite3.connect("finance_ultra.db")
+    cursor = conn.cursor()
+    cursor.execute("REPLACE INTO settings (key, value) VALUES (?, ?)", (key, str(value)))
+    conn.commit()
+    conn.close()
+
+init_db()
+
+# ----------------- DIL WE VALÝUTA -----------------
+CURRENCIES = {
+    "USD": {"symbol": "$", "rate": 1.0},
+    "TMT": {"symbol": "m.", "rate": 3.5},
+    "EUR": {"symbol": "€", "rate": 0.92}
+}
+
+CATEGORIES = ["Iýmit", "Oýun/Programma", "Söwda", "Transport", "Beýleki"]
+
+# ----------------- MAIN FLET APP -----------------
 def main(page: ft.Page):
-    page.title = "Crypto & Finance Tracker"
+    page.title = "MEIKA - Finance Tracker ULTRA PRO v2"
     page.theme_mode = ft.ThemeMode.DARK
-    page.padding = 20
-    page.scroll = ft.ScrollMode.AUTO
+    page.padding = 10
+    page.window_width = 450
+    page.window_height = 800
 
-    # 1. Kripto Bahalary
-    btc_text = ft.Text("BTC: Ýüklenýär...", size=16, weight=ft.FontWeight.BOLD, color="white")
-    eth_text = ft.Text("ETH: Ýüklenýär...", size=16, weight=ft.FontWeight.BOLD, color="white")
+    curr_currency = get_setting("currency") or "USD"
 
-    crypto_card = ft.Card(
-        content=ft.Container(
-            padding=15,
-            bgcolor="#1f2937",
-            border_radius=10,
-            content=ft.Row(
-                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                controls=[
-                    ft.Row([ft.Icon(ft.Icons.CURRENCY_BITCOIN, color="orange", size=28), btc_text]),
-                    ft.Row([ft.Icon(ft.Icons.CURRENCY_EXCHANGE, color="cyan", size=24), eth_text]),
-                ]
-            )
-        )
-    )
+    def format_money(amount_usd):
+        rate = CURRENCIES[curr_currency]["rate"]
+        symbol = CURRENCIES[curr_currency]["symbol"]
+        return f"{symbol}{(amount_usd * rate):.2f}"
 
-    def fetch_crypto_prices():
-        while True:
-            try:
-                btc_url = "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"
-                req_btc = urllib.request.urlopen(btc_url, timeout=5)
-                data_btc = json.loads(req_btc.read().decode())
-                btc_price = float(data_btc["price"])
+    # UI Elementleri
+    lbl_balance = ft.Text("$0.00", size=24, weight=ft.FontWeight.BOLD, color=ft.colors.CYAN)
+    lbl_income = ft.Text("+$0.00", size=18, weight=ft.FontWeight.BOLD, color=ft.colors.GREEN)
+    lbl_expense = ft.Text("-$0.00", size=18, weight=ft.FontWeight.BOLD, color=ft.colors.RED)
+    lbl_warning = ft.Text("", size=12, color=ft.colors.YELLOW)
 
-                eth_url = "https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT"
-                req_eth = urllib.request.urlopen(eth_url, timeout=5)
-                data_eth = json.loads(req_eth.read().decode())
-                eth_price = float(data_eth["price"])
+    # Input Form
+    ent_title = ft.TextField(label="Düşündiriş", expand=True, dense=True)
+    ent_amount = ft.TextField(label="Mukdary", width=100, keyboard_type=ft.KeyboardType.NUMBER, dense=True)
+    cmb_cat = ft.Dropdown(label="Kategoriýa", value=CATEGORIES[0], options=[ft.dropdown.Option(c) for c in CATEGORIES], width=150, dense=True)
 
-                btc_text.value = f"BTC: ${btc_price:,.2f}"
-                eth_text.value = f"ETH: ${eth_price:,.2f}"
-            except Exception:
-                btc_text.value = "BTC: Ýalňyşlyk"
-                eth_text.value = "ETH: Ýalňyşlyk"
-            
-            try:
-                page.update()
-            except Exception:
-                break
-            time.sleep(10)
+    # Transactions List view
+    trans_list = ft.Column(scroll=ft.ScrollMode.AUTO, expand=True)
+    goals_list = ft.Column(scroll=ft.ScrollMode.AUTO, expand=True)
 
-    threading.Thread(target=fetch_crypto_prices, daemon=True).start()
+    # DATA LOAD FUNCTIONS
+    def load_finance_data():
+        trans_list.controls.clear()
+        conn = sqlite3.connect("finance_ultra.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM transactions ORDER BY id DESC")
+        rows = cursor.fetchall()
 
-    # 2. Balans we Pie Chart Seksiyalary
-    balance_text = ft.Text("0.00 TMT", size=28, weight=ft.FontWeight.BOLD, color="green")
-    income_text = ft.Text("+0.00 TMT", color="green", weight=ft.FontWeight.BOLD)
-    expense_text = ft.Text("-0.00 TMT", color="red", weight=ft.FontWeight.BOLD)
+        cursor.execute("SELECT category, limit_amount FROM budgets")
+        budgets = dict(cursor.fetchall())
+        conn.close()
 
-    chart_income_section = ft.PieChartSection(
-        value=1, title="0 TMT", color="green", radius=40,
-        title_style=ft.TextStyle(size=11, weight=ft.FontWeight.BOLD, color="white")
-    )
-    chart_expense_section = ft.PieChartSection(
-        value=1, title="0 TMT", color="red", radius=40,
-        title_style=ft.TextStyle(size=11, weight=ft.FontWeight.BOLD, color="white")
-    )
+        tot_inc, tot_exp = 0.0, 0.0
+        cat_expenses = {}
 
-    pie_chart = ft.PieChart(
-        sections=[chart_income_section, chart_expense_section],
-        sections_space=3,
-        center_space_radius=30,
-        height=140,
-    )
+        for r in rows:
+            t_id, title, amt, t_type, cat, date = r
+            if t_type == "Çykdajy":
+                tot_exp += amt
+                cat_expenses[cat] = cat_expenses.get(cat, 0.0) + amt
+                t_color = ft.colors.RED
+                txt_amt = f"-{format_money(amt)}"
+            else:
+                tot_inc += amt
+                t_color = ft.colors.GREEN
+                txt_amt = f"+{format_money(amt)}"
 
-    balance_card = ft.Card(
-        content=ft.Container(
-            padding=15,
-            bgcolor="#111827",
-            border_radius=12,
-            content=ft.Column(
-                controls=[
-                    ft.Text("Umumy Balans", size=14, color="grey"),
-                    balance_text,
-                    ft.Divider(color="grey"),
-                    ft.Row(
-                        alignment=ft.MainAxisAlignment.SPACE_AROUND,
-                        controls=[
-                            ft.Column([ft.Text("Girdeji (+)", size=12, color="grey"), income_text]),
-                            ft.Column([ft.Text("Çykdajy (-)", size=12, color="grey"), expense_text]),
-                        ]
-                    ),
-                    ft.Container(height=10),
-                    ft.Text("Girdeji / Çykdajy Grafigi", size=12, color="grey"),
-                    pie_chart,
-                ]
-            )
-        )
-    )
+            def delete_item(e, item_id=t_id):
+                c = sqlite3.connect("finance_ultra.db")
+                c.cursor().execute("DELETE FROM transactions WHERE id=?", (item_id,))
+                c.commit()
+                c.close()
+                load_finance_data()
 
-    type_radio = ft.RadioGroup(
-        content=ft.Row([
-            ft.Radio(value="income", label="Girdeji (+)"),
-            ft.Radio(value="expense", label="Çykdajy (-)"),
-        ]),
-        value="income"
-    )
-
-    amount_input = ft.TextField(
-        label="Möçberi (TMT)", width=140, 
-        prefix_icon=ft.Icons.ATTACH_MONEY, border_radius=8,
-        keyboard_type=ft.KeyboardType.NUMBER
-    )
-    desc_input = ft.TextField(
-        label="Düşündiriş", expand=True, 
-        prefix_icon=ft.Icons.DESCRIPTION, border_radius=8
-    )
-
-    history_list = ft.Column(spacing=10)
-    transactions_data = []
-
-    def update_ui_and_chart():
-        tot_inc = sum(t["val"] for t in transactions_data if t["is_income"])
-        tot_exp = sum(t["val"] for t in transactions_data if not t["is_income"])
-        tot_bal = tot_inc - tot_exp
-
-        balance_text.value = f"{tot_bal:.2f} TMT"
-        balance_text.color = "green" if tot_bal >= 0 else "red"
-        income_text.value = f"+{tot_inc:.2f} TMT"
-        expense_text.value = f"-{tot_exp:.2f} TMT"
-
-        chart_income_section.value = tot_inc if tot_inc > 0 else 0.001
-        chart_income_section.title = f"+{tot_inc:.0f}"
-        chart_expense_section.value = tot_exp if tot_exp > 0 else 0.001
-        chart_expense_section.title = f"-{tot_exp:.0f}"
-
-        page.update()
-
-    def save_data():
-        page.client_storage.set("finance_data", transactions_data)
-
-    def render_item_to_ui(item):
-        val = item["val"]
-        desc = item["desc"]
-        is_income = item["is_income"]
-
-        icon = ft.Icons.ARROW_UPWARD if is_income else ft.Icons.ARROW_DOWNWARD
-        color = "green" if is_income else "red"
-        sign = "+" if is_income else "-"
-
-        history_list.controls.insert(
-            0,
-            ft.Container(
-                padding=12, bgcolor="#1f2937", border_radius=8,
-                content=ft.Row(
-                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                    controls=[
-                        ft.Row([ft.Icon(icon, color=color), ft.Text(desc, weight=ft.FontWeight.BOLD)]),
-                        ft.Text(f"{sign}{val:.2f} TMT", color=color, weight=ft.FontWeight.BOLD)
-                    ]
+            trans_list.controls.append(
+                ft.Container(
+                    content=ft.Row([
+                        ft.Column([
+                            ft.Text(title, weight=ft.FontWeight.BOLD, size=14),
+                            ft.Text(f"{cat} | {date}", size=11, color=ft.colors.GREY_400)
+                        ], expand=True),
+                        ft.Text(txt_amt, color=t_color, weight=ft.FontWeight.BOLD, size=14),
+                        ft.IconButton(ft.icons.DELETE, icon_color=ft.colors.RED_400, on_click=delete_item)
+                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                    padding=10,
+                    border=ft.border.all(1, ft.colors.GREY_800),
+                    border_radius=8,
+                    bgcolor=ft.colors.SURFACE_VARIANT
                 )
             )
-        )
 
-    def load_data():
-        nonlocal transactions_data
-        if page.client_storage.contains_key("finance_data"):
-            transactions_data = page.client_storage.get("finance_data") or []
-            history_list.controls.clear()
-            for item in transactions_data:
-                render_item_to_ui(item)
-            update_ui_and_chart()
+        bal = tot_inc - tot_exp
+        lbl_balance.value = format_money(bal)
+        lbl_balance.color = ft.colors.CYAN if bal >= 0 else ft.colors.RED
+        lbl_income.value = f"+{format_money(tot_inc)}"
+        lbl_expense.value = f"-{format_money(tot_exp)}"
 
-    def add_transaction(e):
-        try:
-            val = float(amount_input.value)
-        except (ValueError, TypeError):
-            return
+        # Warnings
+        warnings = []
+        for cat, limit in budgets.items():
+            if limit > 0 and cat_expenses.get(cat, 0.0) > limit:
+                over = cat_expenses[cat] - limit
+                warnings.append(f"⚠️ {cat}: Limit aşyldy (+{format_money(over)})")
+        lbl_warning.value = "\n".join(warnings)
 
-        desc = desc_input.value.strip() if desc_input.value else "Amal"
-        is_income = type_radio.value == "income"
-
-        new_item = {"val": val, "desc": desc, "is_income": is_income}
-        transactions_data.append(new_item)
-        render_item_to_ui(new_item)
-        save_data()
-        update_ui_and_chart()
-
-        amount_input.value = ""
-        desc_input.value = ""
         page.update()
 
-    add_btn = ft.ElevatedButton(
-        content=ft.Row([ft.Icon(ft.Icons.ADD), ft.Text("Amaly Goş")], alignment=ft.MainAxisAlignment.CENTER),
-        on_click=add_transaction,
-        style=ft.ButtonStyle(color="white", bgcolor="#2563eb", padding=15, shape=ft.RoundedRectangleBorder(radius=8)),
+    def add_trans(trans_type):
+        if not ent_title.value or not ent_amount.value: return
+        try:
+            amt = float(ent_amount.value)
+            rate = CURRENCIES[curr_currency]["rate"]
+            amt_usd = amt / rate
+        except: return
+
+        date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+        conn = sqlite3.connect("finance_ultra.db")
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO transactions (title, amount, trans_type, category, date) VALUES (?, ?, ?, ?, ?)",
+                       (ent_title.value.strip(), amt_usd, trans_type, cmb_cat.value, date_str))
+        conn.commit()
+        conn.close()
+
+        ent_title.value = ""
+        ent_amount.value = ""
+        load_finance_data()
+
+    # GOALS DATA LOAD
+    def load_goals_data():
+        goals_list.controls.clear()
+        conn = sqlite3.connect("finance_ultra.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM goals")
+        rows = cursor.fetchall()
+        conn.close()
+
+        for g in rows:
+            gid, name, target, curr = g
+            pct = min(1.0, (curr / target)) if target > 0 else 0
+
+            def add_dep(e, item_id=gid):
+                c = sqlite3.connect("finance_ultra.db")
+                c.cursor().execute("UPDATE goals SET current_amount = current_amount + 10 WHERE id=?", (item_id,))
+                c.commit()
+                c.close()
+                load_goals_data()
+
+            goals_list.controls.append(
+                ft.Container(
+                    content=ft.Column([
+                        ft.Row([
+                            ft.Text(f"🎯 {name}", weight=ft.FontWeight.BOLD, expand=True),
+                            ft.Text(f"{format_money(curr)} / {format_money(target)}")
+                        ]),
+                        ft.ProgressBar(value=pct, color=ft.colors.CYAN),
+                        ft.ElevatedButton("+$10 Goş", on_click=add_dep, style=ft.ButtonStyle(color=ft.colors.GREEN))
+                    ]),
+                    padding=10,
+                    border=ft.border.all(1, ft.colors.GREY_800),
+                    border_radius=8
+                )
+            )
+        page.update()
+
+    # Goals Input
+    ent_g_name = ft.TextField(label="Maksat ady", expand=True, dense=True)
+    ent_g_target = ft.TextField(label="Maksat mukdary", width=120, keyboard_type=ft.KeyboardType.NUMBER, dense=True)
+
+    def add_goal(e):
+        if ent_g_name.value and ent_g_target.value:
+            conn = sqlite3.connect("finance_ultra.db")
+            cursor = conn.cursor()
+            cursor.execute("INSERT INTO goals (title, target_amount, current_amount) VALUES (?, ?, 0)",
+                           (ent_g_name.value.strip(), float(ent_g_target.value)))
+            conn.commit()
+            conn.close()
+            ent_g_name.value = ""
+            ent_g_target.value = ""
+            load_goals_data()
+
+    # VIEWS
+    tab_finance = ft.Column([
+        ft.Card(
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Text("JEMI BALANS", size=12, color=ft.colors.GREY_400),
+                    lbl_balance,
+                    ft.Divider(),
+                    ft.Row([
+                        ft.Column([ft.Text("Girdeji", size=10), lbl_income]),
+                        ft.Column([ft.Text("Çykdajy", size=10), lbl_expense]),
+                    ], alignment=ft.MainAxisAlignment.SPACE_AROUND)
+                ]), padding=15
+            )
+        ),
+        lbl_warning,
+        ft.Row([ent_title, ent_amount]),
+        ft.Row([cmb_cat]),
+        ft.Row([
+            ft.ElevatedButton("➕ Girdeji", on_click=lambda e: add_trans("Girdeji"), bgcolor=ft.colors.GREEN_800, color=ft.colors.WHITE, expand=True),
+            ft.ElevatedButton("➖ Çykdajy", on_click=lambda e: add_trans("Çykdajy"), bgcolor=ft.colors.RED_800, color=ft.colors.WHITE, expand=True)
+        ]),
+        ft.Text("Geçirimler", weight=ft.FontWeight.BOLD, size=16),
+        trans_list
+    ], expand=True)
+
+    tab_goals = ft.Column([
+        ft.Row([ent_g_name, ent_g_target]),
+        ft.ElevatedButton("🎯 Täze Maksat Goş", on_click=add_goal, bgcolor=ft.colors.CYAN_700, color=ft.colors.WHITE),
+        ft.Divider(),
+        goals_list
+    ], expand=True)
+
+    # SETTINGS TAB
+    def change_currency(e):
+        nonlocal curr_currency
+        curr_currency = e.control.value
+        set_setting("currency", curr_currency)
+        load_finance_data()
+        load_goals_data()
+
+    cmb_curr_set = ft.Dropdown(
+        label="Valýuta",
+        value=curr_currency,
+        options=[ft.dropdown.Option(k) for k in CURRENCIES.keys()],
+        on_change=change_currency
     )
 
-    page.add(
-        crypto_card,
-        ft.Container(height=10),
-        balance_card,
-        ft.Container(height=15),
-        ft.Text("Amalyň görnüşi:", size=14, weight=ft.FontWeight.BOLD),
-        type_radio,
-        ft.Container(height=5),
-        ft.Row([amount_input, desc_input]),
-        ft.Container(height=10),
-        add_btn,
-        ft.Container(height=20),
-        ft.Text("Soňky Amallar", size=18, weight=ft.FontWeight.BOLD),
-        history_list
+    tab_settings = ft.Column([
+        ft.Text("⚙️ Sazlamalar", size=18, weight=ft.FontWeight.BOLD),
+        cmb_curr_set,
+        ft.Divider(),
+        ft.Text("💾 Baza Dolandyryş", weight=ft.FontWeight.BOLD),
+        ft.ElevatedButton("🗑️ Bazany Arassala", bgcolor=ft.colors.RED_900, color=ft.colors.WHITE,
+                          on_click=lambda e: [sqlite3.connect("finance_ultra.db").cursor().execute("DELETE FROM transactions"), load_finance_data()])
+    ], expand=True)
+
+    # Navigation Tabs
+    tabs = ft.Tabs(
+        selected_index=0,
+        animation_duration=300,
+        tabs=[
+            ft.Tab(text="Balans", icon=ft.icons.ACCOUNT_BALANCE_WALLET, content=tab_finance),
+            ft.Tab(text="Maksatlar", icon=ft.icons.TRACK_CHANGES, content=tab_goals),
+            ft.Tab(text="Sazlamalar", icon=ft.icons.SETTINGS, content=tab_settings),
+        ],
+        expand=True
     )
 
-    load_data()
+    page.add(tabs)
+    load_finance_data()
+    load_goals_data()
 
-if __name__ == "__main__":
-    ft.app(target=main)
+ft.app(target=main)
