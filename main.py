@@ -1,289 +1,302 @@
-import flet as ft
+from flask import Flask, render_template_string, request, jsonify
 import sqlite3
-import csv
-import shutil
 from datetime import datetime
 
-# ----------------- BAZA LOGIKASY -----------------
+app = Flask(__name__)
+
+# ----------------- DATABASE SETUP -----------------
 def init_db():
     conn = sqlite3.connect("finance_ultra.db")
     cursor = conn.cursor()
     cursor.execute('CREATE TABLE IF NOT EXISTS transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, amount REAL, trans_type TEXT, category TEXT, date TEXT)')
     cursor.execute('CREATE TABLE IF NOT EXISTS goals (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, target_amount REAL, current_amount REAL)')
-    cursor.execute('CREATE TABLE IF NOT EXISTS budgets (category TEXT PRIMARY KEY, limit_amount REAL)')
-    cursor.execute('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)')
-    cursor.execute("INSERT OR IGNORE INTO settings VALUES ('language', 'Türkmen')")
-    cursor.execute("INSERT OR IGNORE INTO settings VALUES ('currency', 'USD')")
-    conn.commit()
-    conn.close()
-
-def get_setting(key):
-    conn = sqlite3.connect("finance_ultra.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT value FROM settings WHERE key=?", (key,))
-    row = cursor.fetchone()
-    conn.close()
-    return row[0] if row else ""
-
-def set_setting(key, value):
-    conn = sqlite3.connect("finance_ultra.db")
-    cursor = conn.cursor()
-    cursor.execute("REPLACE INTO settings (key, value) VALUES (?, ?)", (key, str(value)))
     conn.commit()
     conn.close()
 
 init_db()
 
-# ----------------- DIL WE VALÝUTA -----------------
-CURRENCIES = {
-    "USD": {"symbol": "$", "rate": 1.0},
-    "TMT": {"symbol": "m.", "rate": 3.5},
-    "EUR": {"symbol": "€", "rate": 0.92}
-}
+# ----------------- HTML / JS / CSS (FRONTEND UI) -----------------
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="tk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MEIKA - Finance Tracker ULTRA PRO</title>
+    <style>
+        :root {
+            --bg-color: #0D0E15;
+            --card-bg: #161824;
+            --border-color: #25283B;
+            --cyan: #00F0FF;
+            --green: #00FF88;
+            --red: #FF2A6D;
+            --text: #FFFFFF;
+            --muted: #8A8DAB;
+        }
 
-CATEGORIES = ["Iýmit", "Oýun/Programma", "Söwda", "Transport", "Beýleki"]
+        body {
+            background-color: var(--bg-color);
+            color: var(--text);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 15px;
+        }
 
-# ----------------- MAIN FLET APP -----------------
-def main(page: ft.Page):
-    page.title = "MEIKA - Finance Tracker ULTRA PRO v2"
-    page.theme_mode = ft.ThemeMode.DARK
-    page.padding = 10
-    page.window_width = 450
-    page.window_height = 800
+        h1, h2, h3 { margin: 0; }
+        
+        .header {
+            color: var(--cyan);
+            text-align: center;
+            font-size: 20px;
+            font-weight: bold;
+            padding: 10px 0;
+            border-bottom: 1px solid var(--border-color);
+            margin-bottom: 15px;
+        }
 
-    curr_currency = get_setting("currency") or "USD"
+        .balance-card {
+            background: var(--card-bg);
+            border: 1px solid var(--cyan);
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+            text-align: center;
+        }
 
-    def format_money(amount_usd):
-        rate = CURRENCIES[curr_currency]["rate"]
-        symbol = CURRENCIES[curr_currency]["symbol"]
-        return f"{symbol}{(amount_usd * rate):.2f}"
+        .balance-val {
+            font-size: 28px;
+            font-weight: bold;
+            color: var(--cyan);
+            margin-top: 5px;
+        }
 
-    # UI Elementleri
-    lbl_balance = ft.Text("$0.00", size=24, weight=ft.FontWeight.BOLD, color=ft.colors.CYAN)
-    lbl_income = ft.Text("+$0.00", size=18, weight=ft.FontWeight.BOLD, color=ft.colors.GREEN)
-    lbl_expense = ft.Text("-$0.00", size=18, weight=ft.FontWeight.BOLD, color=ft.colors.RED)
-    lbl_warning = ft.Text("", size=12, color=ft.colors.YELLOW)
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
 
-    # Input Form
-    ent_title = ft.TextField(label="Düşündiriş", expand=True, dense=True)
-    ent_amount = ft.TextField(label="Mukdary", width=100, keyboard_type=ft.KeyboardType.NUMBER, dense=True)
-    cmb_cat = ft.Dropdown(label="Kategoriýa", value=CATEGORIES[0], options=[ft.dropdown.Option(c) for c in CATEGORIES], width=150, dense=True)
+        .stat-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 10px;
+        }
 
-    # Transactions List view
-    trans_list = ft.Column(scroll=ft.ScrollMode.AUTO, expand=True)
-    goals_list = ft.Column(scroll=ft.ScrollMode.AUTO, expand=True)
+        .inc-val { color: var(--green); font-size: 18px; font-weight: bold; }
+        .exp-val { color: var(--red); font-size: 18px; font-weight: bold; }
 
-    # DATA LOAD FUNCTIONS
-    def load_finance_data():
-        trans_list.controls.clear()
-        conn = sqlite3.connect("finance_ultra.db")
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM transactions ORDER BY id DESC")
-        rows = cursor.fetchall()
+        .form-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
 
-        cursor.execute("SELECT category, limit_amount FROM budgets")
-        budgets = dict(cursor.fetchall())
-        conn.close()
+        input, select, button {
+            width: 100%;
+            padding: 10px;
+            margin-top: 8px;
+            background: #0D0E15;
+            border: 1px solid var(--border-color);
+            color: #fff;
+            border-radius: 5px;
+            box-sizing: border-box;
+        }
 
-        tot_inc, tot_exp = 0.0, 0.0
-        cat_expenses = {}
+        .btn-inc { background: var(--green); color: #000; font-weight: bold; cursor: pointer; border: none; }
+        .btn-exp { background: var(--red); color: #fff; font-weight: bold; cursor: pointer; border: none; }
 
-        for r in rows:
-            t_id, title, amt, t_type, cat, date = r
-            if t_type == "Çykdajy":
-                tot_exp += amt
-                cat_expenses[cat] = cat_expenses.get(cat, 0.0) + amt
-                t_color = ft.colors.RED
-                txt_amt = f"-{format_money(amt)}"
-            else:
-                tot_inc += amt
-                t_color = ft.colors.GREEN
-                txt_amt = f"+{format_money(amt)}"
+        .trans-item {
+            background: var(--card-bg);
+            border-bottom: 1px solid var(--border-color);
+            padding: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-radius: 5px;
+            margin-bottom: 5px;
+        }
 
-            def delete_item(e, item_id=t_id):
-                c = sqlite3.connect("finance_ultra.db")
-                c.cursor().execute("DELETE FROM transactions WHERE id=?", (item_id,))
-                c.commit()
-                c.close()
-                load_finance_data()
+        .trans-title { font-weight: bold; font-size: 14px; }
+        .trans-cat { color: var(--muted); font-size: 12px; }
+        .trans-amount { font-weight: bold; font-size: 16px; }
 
-            trans_list.controls.append(
-                ft.Container(
-                    content=ft.Row([
-                        ft.Column([
-                            ft.Text(title, weight=ft.FontWeight.BOLD, size=14),
-                            ft.Text(f"{cat} | {date}", size=11, color=ft.colors.GREY_400)
-                        ], expand=True),
-                        ft.Text(txt_amt, color=t_color, weight=ft.FontWeight.BOLD, size=14),
-                        ft.IconButton(ft.icons.DELETE, icon_color=ft.colors.RED_400, on_click=delete_item)
-                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                    padding=10,
-                    border=ft.border.all(1, ft.colors.GREY_800),
-                    border_radius=8,
-                    bgcolor=ft.colors.SURFACE_VARIANT
-                )
-            )
+        .goal-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 10px;
+            margin-bottom: 10px;
+        }
 
-        bal = tot_inc - tot_exp
-        lbl_balance.value = format_money(bal)
-        lbl_balance.color = ft.colors.CYAN if bal >= 0 else ft.colors.RED
-        lbl_income.value = f"+{format_money(tot_inc)}"
-        lbl_expense.value = f"-{format_money(tot_exp)}"
+        .progress-bar {
+            background: #25283B;
+            height: 8px;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 5px;
+        }
 
-        # Warnings
-        warnings = []
-        for cat, limit in budgets.items():
-            if limit > 0 and cat_expenses.get(cat, 0.0) > limit:
-                over = cat_expenses[cat] - limit
-                warnings.append(f"⚠️ {cat}: Limit aşyldy (+{format_money(over)})")
-        lbl_warning.value = "\n".join(warnings)
+        .progress-fill {
+            background: var(--cyan);
+            height: 100%;
+            width: 0%;
+        }
+    </style>
+</head>
+<body>
 
-        page.update()
+    <div class="header">⚡ MEIKA FINANCE ULTRA PRO</div>
 
-    def add_trans(trans_type):
-        if not ent_title.value or not ent_amount.value: return
-        try:
-            amt = float(ent_amount.value)
-            rate = CURRENCIES[curr_currency]["rate"]
-            amt_usd = amt / rate
-        except: return
+    <!-- BALANCE OVERVIEW -->
+    <div class="balance-card">
+        <div style="color: var(--muted); font-size: 12px;">JEMI BALANS</div>
+        <div class="balance-val" id="totalBalance">$0.00</div>
+    </div>
 
-        date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-        conn = sqlite3.connect("finance_ultra.db")
-        cursor = conn.cursor()
-        cursor.execute("INSERT INTO transactions (title, amount, trans_type, category, date) VALUES (?, ?, ?, ?, ?)",
-                       (ent_title.value.strip(), amt_usd, trans_type, cmb_cat.value, date_str))
-        conn.commit()
-        conn.close()
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div style="color: var(--muted); font-size: 11px;">GIRDEJILER</div>
+            <div class="inc-val" id="totalIncome">+$0.00</div>
+        </div>
+        <div class="stat-card">
+            <div style="color: var(--muted); font-size: 11px;">ÇYKDAJYLAR</div>
+            <div class="exp-val" id="totalExpense">-$0.00</div>
+        </div>
+    </div>
 
-        ent_title.value = ""
-        ent_amount.value = ""
-        load_finance_data()
+    <!-- FORM PANEL -->
+    <div class="form-card">
+        <input type="text" id="desc" placeholder="Düşündiriş (Meselem: Nahar)">
+        <input type="number" id="amount" placeholder="Mukdary ($)">
+        <select id="cat">
+            <option value="Iýmit">Iýmit</option>
+            <option value="Oýun/Programma">Oýun/Programma</option>
+            <option value="Söwda">Söwda</option>
+            <option value="Transport">Transport</option>
+            <option value="Beýleki">Beýleki</option>
+        </select>
+        <div style="display: flex; gap: 10px; margin-top: 10px;">
+            <button class="btn-inc" onclick="addTrans('Girdeji')">➕ Girdeji</button>
+            <button class="btn-exp" onclick="addTrans('Çykdajy')">➖ Çykdajy</button>
+        </div>
+    </div>
 
-    # GOALS DATA LOAD
-    def load_goals_data():
-        goals_list.controls.clear()
-        conn = sqlite3.connect("finance_ultra.db")
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM goals")
-        rows = cursor.fetchall()
-        conn.close()
+    <!-- TRANSACTIONS LIST -->
+    <h3 style="color: var(--cyan); margin-bottom: 10px; font-size: 16px;">Geçirimler</h3>
+    <div id="transList"></div>
 
-        for g in rows:
-            gid, name, target, curr = g
-            pct = min(1.0, (curr / target)) if target > 0 else 0
+    <script>
+        async function fetchFinanceData() {
+            const res = await fetch('/api/get_data');
+            const data = await res.json();
+            
+            document.getElementById('totalBalance').innerText = `$${data.balance.toFixed(2)}`;
+            document.getElementById('totalIncome').innerText = `+$${data.income.toFixed(2)}`;
+            document.getElementById('totalExpense').innerText = `-$${data.expense.toFixed(2)}`;
 
-            def add_dep(e, item_id=gid):
-                c = sqlite3.connect("finance_ultra.db")
-                c.cursor().execute("UPDATE goals SET current_amount = current_amount + 10 WHERE id=?", (item_id,))
-                c.commit()
-                c.close()
-                load_goals_data()
+            const listEl = document.getElementById('transList');
+            listEl.innerHTML = '';
+            
+            data.transactions.forEach(item => {
+                const isInc = item.type === 'Girdeji';
+                const color = isInc ? 'var(--green)' : 'var(--red)';
+                const sign = isInc ? '+' : '-';
+                
+                listEl.innerHTML += `
+                    <div class="trans-item">
+                        <div>
+                            <div class="trans-title">${item.title}</div>
+                            <div class="trans-cat">${item.category} • ${item.date}</div>
+                        </div>
+                        <div class="trans-amount" style="color: ${color}">
+                            ${sign}$${item.amount.toFixed(2)}
+                        </div>
+                    </div>
+                `;
+            });
+        }
 
-            goals_list.controls.append(
-                ft.Container(
-                    content=ft.Column([
-                        ft.Row([
-                            ft.Text(f"🎯 {name}", weight=ft.FontWeight.BOLD, expand=True),
-                            ft.Text(f"{format_money(curr)} / {format_money(target)}")
-                        ]),
-                        ft.ProgressBar(value=pct, color=ft.colors.CYAN),
-                        ft.ElevatedButton("+$10 Goş", on_click=add_dep, style=ft.ButtonStyle(color=ft.colors.GREEN))
-                    ]),
-                    padding=10,
-                    border=ft.border.all(1, ft.colors.GREY_800),
-                    border_radius=8
-                )
-            )
-        page.update()
+        async function addTrans(type) {
+            const title = document.getElementById('desc').value;
+            const amount = document.getElementById('amount').value;
+            const category = document.getElementById('cat').value;
 
-    # Goals Input
-    ent_g_name = ft.TextField(label="Maksat ady", expand=True, dense=True)
-    ent_g_target = ft.TextField(label="Maksat mukdary", width=120, keyboard_type=ft.KeyboardType.NUMBER, dense=True)
+            if(!title || !amount) return;
 
-    def add_goal(e):
-        if ent_g_name.value and ent_g_target.value:
-            conn = sqlite3.connect("finance_ultra.db")
-            cursor = conn.cursor()
-            cursor.execute("INSERT INTO goals (title, target_amount, current_amount) VALUES (?, ?, 0)",
-                           (ent_g_name.value.strip(), float(ent_g_target.value)))
-            conn.commit()
-            conn.close()
-            ent_g_name.value = ""
-            ent_g_target.value = ""
-            load_goals_data()
+            await fetch('/api/add_trans', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title, amount: parseFloat(amount), type, category })
+            });
 
-    # VIEWS
-    tab_finance = ft.Column([
-        ft.Card(
-            content=ft.Container(
-                content=ft.Column([
-                    ft.Text("JEMI BALANS", size=12, color=ft.colors.GREY_400),
-                    lbl_balance,
-                    ft.Divider(),
-                    ft.Row([
-                        ft.Column([ft.Text("Girdeji", size=10), lbl_income]),
-                        ft.Column([ft.Text("Çykdajy", size=10), lbl_expense]),
-                    ], alignment=ft.MainAxisAlignment.SPACE_AROUND)
-                ]), padding=15
-            )
-        ),
-        lbl_warning,
-        ft.Row([ent_title, ent_amount]),
-        ft.Row([cmb_cat]),
-        ft.Row([
-            ft.ElevatedButton("➕ Girdeji", on_click=lambda e: add_trans("Girdeji"), bgcolor=ft.colors.GREEN_800, color=ft.colors.WHITE, expand=True),
-            ft.ElevatedButton("➖ Çykdajy", on_click=lambda e: add_trans("Çykdajy"), bgcolor=ft.colors.RED_800, color=ft.colors.WHITE, expand=True)
-        ]),
-        ft.Text("Geçirimler", weight=ft.FontWeight.BOLD, size=16),
-        trans_list
-    ], expand=True)
+            document.getElementById('desc').value = '';
+            document.getElementById('amount').value = '';
+            fetchFinanceData();
+        }
 
-    tab_goals = ft.Column([
-        ft.Row([ent_g_name, ent_g_target]),
-        ft.ElevatedButton("🎯 Täze Maksat Goş", on_click=add_goal, bgcolor=ft.colors.CYAN_700, color=ft.colors.WHITE),
-        ft.Divider(),
-        goals_list
-    ], expand=True)
+        fetchFinanceData();
+    </script>
+</body>
+</html>
+"""
 
-    # SETTINGS TAB
-    def change_currency(e):
-        nonlocal curr_currency
-        curr_currency = e.control.value
-        set_setting("currency", curr_currency)
-        load_finance_data()
-        load_goals_data()
+# ----------------- API ENDPOINTS -----------------
+@app.route('/')
+def home():
+    return render_template_string(HTML_TEMPLATE)
 
-    cmb_curr_set = ft.Dropdown(
-        label="Valýuta",
-        value=curr_currency,
-        options=[ft.dropdown.Option(k) for k in CURRENCIES.keys()],
-        on_change=change_currency
-    )
+@app.route('/api/get_data', methods=['GET'])
+def get_data():
+    conn = sqlite3.connect("finance_ultra.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, title, amount, trans_type, category, date FROM transactions ORDER BY id DESC")
+    rows = cursor.fetchall()
+    conn.close()
 
-    tab_settings = ft.Column([
-        ft.Text("⚙️ Sazlamalar", size=18, weight=ft.FontWeight.BOLD),
-        cmb_curr_set,
-        ft.Divider(),
-        ft.Text("💾 Baza Dolandyryş", weight=ft.FontWeight.BOLD),
-        ft.ElevatedButton("🗑️ Bazany Arassala", bgcolor=ft.colors.RED_900, color=ft.colors.WHITE,
-                          on_click=lambda e: [sqlite3.connect("finance_ultra.db").cursor().execute("DELETE FROM transactions"), load_finance_data()])
-    ], expand=True)
+    tot_inc, tot_exp = 0.0, 0.0
+    transactions = []
 
-    # Navigation Tabs
-    tabs = ft.Tabs(
-        selected_index=0,
-        animation_duration=300,
-        tabs=[
-            ft.Tab(text="Balans", icon=ft.icons.ACCOUNT_BALANCE_WALLET, content=tab_finance),
-            ft.Tab(text="Maksatlar", icon=ft.icons.TRACK_CHANGES, content=tab_goals),
-            ft.Tab(text="Sazlamalar", icon=ft.icons.SETTINGS, content=tab_settings),
-        ],
-        expand=True
-    )
+    for r in rows:
+        t_id, title, amt, t_type, cat, date = r
+        if t_type == "Girdeji":
+            tot_inc += amt
+        else:
+            tot_exp += amt
+        
+        transactions.append({
+            "id": t_id, "title": title, "amount": amt,
+            "type": t_type, "category": cat, "date": date
+        })
 
-    page.add(tabs)
-    load_finance_data()
-    load_goals_data()
+    return jsonify({
+        "balance": tot_inc - tot_exp,
+        "income": tot_inc,
+        "expense": tot_exp,
+        "transactions": transactions
+    })
 
-ft.app(target=main)
+@app.route('/api/add_trans', methods=['POST'])
+def add_trans():
+    data = request.json
+    title = data.get('title')
+    amount = data.get('amount')
+    trans_type = data.get('type')
+    category = data.get('category')
+    date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    conn = sqlite3.connect("finance_ultra.db")
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO transactions (title, amount, trans_type, category, date) VALUES (?, ?, ?, ?, ?)",
+                   (title, amount, trans_type, category, date_str))
+    conn.commit()
+    conn.close()
+
+    return jsonify({"status": "success"})
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)
